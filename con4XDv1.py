@@ -41,25 +41,29 @@ def winning_move(board, piece):
     # Check horizontal locations for win
     for c in range(COLUMN_COUNT-3):
         for r in range(ROW_COUNT):
-            if board[r][c] == piece and board[r][c+1] == piece and board[r][c+2] == piece and board[r][c+3] == piece:
+            if (board[r][c] == piece and board[r][c+1] == piece and
+                board[r][c+2] == piece and board[r][c+3] == piece):
                 return True
 
     # Check vertical locations for win
     for c in range(COLUMN_COUNT):
         for r in range(ROW_COUNT-3):
-            if board[r][c] == piece and board[r+1][c] == piece and board[r+2][c] == piece and board[r+3][c] == piece:
+            if (board[r][c] == piece and board[r+1][c] == piece and
+                board[r+2][c] == piece and board[r+3][c] == piece):
                 return True
 
     # Check positively sloped diagonals
     for c in range(COLUMN_COUNT-3):
         for r in range(ROW_COUNT-3):
-            if board[r][c] == piece and board[r+1][c+1] == piece and board[r+2][c+2] == piece and board[r+3][c+3] == piece:
+            if (board[r][c] == piece and board[r+1][c+1] == piece and
+                board[r+2][c+2] == piece and board[r+3][c+3] == piece):
                 return True
 
     # Check negatively sloped diagonals
     for c in range(COLUMN_COUNT-3):
         for r in range(3, ROW_COUNT):
-            if board[r][c] == piece and board[r-1][c+1] == piece and board[r-2][c+2] == piece and board[r-3][c+3] == piece:
+            if (board[r][c] == piece and board[r-1][c+1] == piece and
+                board[r-2][c+2] == piece and board[r-3][c+3] == piece):
                 return True
 
 def draw_board(board, myfont, player1_used_bomb, player2_used_bomb):
@@ -98,6 +102,45 @@ def remove_surrounding_pieces(board, row, col):
     
     # Remove the bomb piece itself
     board[row][col] = 0
+
+    # Apply gravity after removing pieces
+    apply_gravity(board)
+
+def apply_gravity(board):
+    for c in range(COLUMN_COUNT):
+        # Extract the column as a list from bottom to top
+        col_pieces = [board[r][c] for r in range(ROW_COUNT)]
+        # Remove zeros (empty spaces)
+        non_zero_pieces = [piece for piece in col_pieces if piece != 0]
+        # Add zeros at the top to fill the column
+        new_col = non_zero_pieces + [0] * (ROW_COUNT - len(non_zero_pieces))
+        # Update the board column
+        for r in range(ROW_COUNT):
+            board[r][c] = new_col[r]
+
+def is_board_full(board):
+    for c in range(COLUMN_COUNT):
+        if is_valid_location(board, c):
+            return False
+    return True
+
+def check_game_over(board):
+    if winning_move(board, 1):
+        label = myfont.render("Player 1 wins!!", 1, RED)
+        screen.blit(label, (40, 10))
+        pygame.display.update()
+        return True
+    elif winning_move(board, 2):
+        label = myfont.render("Player 2 wins!!", 1, BLUE)
+        screen.blit(label, (40, 10))
+        pygame.display.update()
+        return True
+    elif is_board_full(board):
+        label = myfont.render("Game ends in a draw!", 1, WHITE)
+        screen.blit(label, (40, 10))
+        pygame.display.update()
+        return True
+    return False
 
 SQUARESIZE = 100
 width = COLUMN_COUNT * SQUARESIZE
@@ -158,20 +201,15 @@ while not game_over:
                     if turn == 0:
                         drop_piece(board, row, col, 1)
                         player1_used_bomb_last_turn = False
-                        if winning_move(board, 1):
-                            label = myfont.render("Player 1 wins!!", 1, RED)
-                            screen.blit(label, (40, 40))
-                            game_over = True
                     else:
                         drop_piece(board, row, col, 2)
                         player2_used_bomb_last_turn = False
-                        if winning_move(board, 2):
-                            label = myfont.render("Player 2 wins!!", 1, BLUE)
-                            screen.blit(label, (40, 10))
-                            game_over = True
-                    
-                    turn += 1
-                    turn = turn % 2
+
+                    draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
+                    game_over = check_game_over(board)
+                    if not game_over:
+                        turn += 1
+                        turn = turn % 2
                 else:
                     # Ask for bomb usage if they haven't used it
                     if (turn == 0 and not player1_used_bomb) or (turn == 1 and not player2_used_bomb):
@@ -179,25 +217,20 @@ while not game_over:
                         label = myfont.render("Use Bomb? Press Y or N", 1, WHITE)
                         screen.blit(label, (140, 70))
                         pygame.display.update()
+                        selected_row = row
+                        selected_col = col
                     else:
                         # Player must place a regular disc
                         if turn == 0:
                             drop_piece(board, row, col, 1)
-                            if winning_move(board, 1):
-                                label = myfont.render("Player 1 wins!!", 1, RED)
-                                screen.blit(label, (40, 10))
-                                game_over = True
                         else:
                             drop_piece(board, row, col, 2)
-                            if winning_move(board, 2):
-                                label = myfont.render("Player 2 wins!!", 1, BLUE)
-                                screen.blit(label, (40, 10))
-                                game_over = True
-                        
-                        turn += 1
-                        turn = turn % 2
 
-                draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
+                        draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
+                        game_over = check_game_over(board)
+                        if not game_over:
+                            turn += 1
+                            turn = turn % 2
 
         if event.type == pygame.KEYDOWN and bomb_event:
             if event.key == pygame.K_y:
@@ -206,9 +239,13 @@ while not game_over:
                 use_bomb = False
 
             bomb_event = False  # Reset bomb prompt
+            pygame.draw.rect(screen, BLACK, (140, 70, 300, 40))  # Clear the bomb prompt
+            pygame.display.update()
 
             if use_bomb:
-                remove_surrounding_pieces(board, row, col)
+                remove_surrounding_pieces(board, selected_row, selected_col)
+                draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
+                game_over = check_game_over(board)
                 if turn == 0:
                     player1_used_bomb = True
                     player1_used_bomb_last_turn = True
@@ -217,27 +254,21 @@ while not game_over:
                     player2_used_bomb_last_turn = True
                 use_bomb = False
 
-                turn += 1
-                turn = turn % 2
+                if not game_over:
+                    turn += 1
+                    turn = turn % 2
             else:
                 # Place a regular disc
                 if turn == 0:
-                    drop_piece(board, row, col, 1)
-                    if winning_move(board, 1):
-                        label = myfont.render("Player 1 wins!!", 1, RED)
-                        screen.blit(label, (40, 10))
-                        game_over = True
+                    drop_piece(board, selected_row, selected_col, 1)
                 else:
-                    drop_piece(board, row, col, 2)
-                    if winning_move(board, 2):
-                        label = myfont.render("Player 2 wins!!", 1, BLUE)
-                        screen.blit(label, (40, 10))
-                        game_over = True
+                    drop_piece(board, selected_row, selected_col, 2)
 
-                turn += 1
-                turn = turn % 2
+                draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
+                game_over = check_game_over(board)
+                if not game_over:
+                    turn += 1
+                    turn = turn % 2
 
-            draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
-
-        if game_over:
-            pygame.time.wait(3000)
+    if game_over:
+        pygame.time.wait(3000)
