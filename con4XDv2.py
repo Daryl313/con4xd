@@ -2,6 +2,7 @@ import numpy as np
 import pygame
 import sys
 import math
+import random
 
 # Initialize Pygame
 pygame.init()
@@ -18,6 +19,19 @@ GREEN = (0,255,0)
 
 ROW_COUNT = 6
 COLUMN_COUNT = 7
+SQUARESIZE = 100
+WINDOW_LENGTH = 4
+
+width = COLUMN_COUNT * SQUARESIZE
+height = (ROW_COUNT + 1) * SQUARESIZE
+
+size = (width, height)
+
+RADIUS = int(SQUARESIZE / 2 - 5)
+
+screen = pygame.display.set_mode(size)
+
+myfont = pygame.font.SysFont("monospace", 30)
 
 def create_board():
     board = np.zeros((ROW_COUNT,COLUMN_COUNT))
@@ -159,133 +173,404 @@ def check_game_over(board):
         return True
     return False
 
-SQUARESIZE = 100
-width = COLUMN_COUNT * SQUARESIZE
-height = (ROW_COUNT+1) * SQUARESIZE
+def bomb_prompt():
+    label = myfont.render("Use Bomb? Press Y or N", 1, WHITE)
+    screen.blit(label, (140, 70))
+    pygame.display.update()
 
-size = (width, height)
+def evaluate_window(window, piece):
+    score = 0
+    opp_piece = 1
+    if piece == 1:
+        opp_piece = 2
 
-RADIUS = int(SQUARESIZE/2 - 5)
+    if window.count(piece) == 4:
+        score += 100
+    elif window.count(piece) == 3 and window.count(0) == 1:
+        score += 5
+    elif window.count(piece) == 2 and window.count(0) == 2:
+        score += 2
 
-screen = pygame.display.set_mode(size)
+    if window.count(opp_piece) == 3 and window.count(0) == 1:
+        score -= 4
 
-myfont = pygame.font.SysFont("monospace", 30)
+    return score
 
-board = create_board()
-print_board(board)
-game_over = False
-turn = 0
+def score_position(board, piece):
+    score = 0
 
-player1_used_bomb = False
-player2_used_bomb = False
-player1_used_bomb_last_turn = False
-player2_used_bomb_last_turn = False
+    ## Score center column
+    center_array = [int(i) for i in list(board[:, COLUMN_COUNT//2])]
+    center_count = center_array.count(piece)
+    score += center_count * 3
 
-draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
+    ## Score Horizontal
+    for r in range(ROW_COUNT):
+        row_array = [int(i) for i in list(board[r,:])]
+        for c in range(COLUMN_COUNT-3):
+            window = row_array[c:c+WINDOW_LENGTH]
+            score += evaluate_window(window, piece)
 
-pygame.display.update()
+    ## Score Vertical
+    for c in range(COLUMN_COUNT):
+        col_array = [int(i) for i in list(board[:,c])]
+        for r in range(ROW_COUNT-3):
+            window = col_array[r:r+WINDOW_LENGTH]
+            score += evaluate_window(window, piece)
 
-bomb_event = False
-use_bomb = False
+    ## Score positive sloped diagonal
+    for r in range(ROW_COUNT-3):
+        for c in range(COLUMN_COUNT-3):
+            window = [board[r+i][c+i] for i in range(WINDOW_LENGTH)]
+            score += evaluate_window(window, piece)
 
-while not game_over:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            sys.exit()
+    for r in range(ROW_COUNT-3):
+        for c in range(COLUMN_COUNT-3):
+            window = [board[r+3-i][c+i] for i in range(WINDOW_LENGTH)]
+            score += evaluate_window(window, piece)
 
-        if event.type == pygame.MOUSEMOTION:
-            pygame.draw.rect(screen, BLACK, (0, 0, width, SQUARESIZE))
-            posx = event.pos[0]
-            if turn == 0:
-                pygame.draw.circle(screen, RED, (posx, int(SQUARESIZE / 2)), RADIUS)
+    return score
+
+def get_valid_locations(board):
+    valid_locations = []
+    for col in range(COLUMN_COUNT):
+        if is_valid_location(board, col):
+            valid_locations.append(col)
+    return valid_locations
+
+def is_terminal_node(board):
+    return winning_move(board, 1) or winning_move(board, 2) or len(get_valid_locations(board)) == 0
+
+def minimax(board, depth, alpha, beta, maximizingPlayer, player_piece, player1_used_bomb, player2_used_bomb):
+    use_bomb = False
+
+    if player_piece == 1:
+        opp_player_piece = 2
+    else:
+        opp_player_piece = 1
+
+    valid_locations = get_valid_locations(board)
+    is_terminal = is_terminal_node(board)
+    if depth == 0 or is_terminal:
+        if is_terminal:
+            if winning_move(board, player_piece):
+                return False, None, 100000000000000
+            elif winning_move(board, opp_player_piece):
+                return False, None, -10000000000000
+            else: # Game is over, no more valid moves
+                return False, None, 0
+        else: # Depth is zero
+            return False, None, score_position(board, player_piece)
+    if maximizingPlayer:
+        value = -math.inf
+        column = random.choice(valid_locations)
+        for col in valid_locations:
+            row = get_next_open_row(board, col)
+
+            b_copy = board.copy()
+            drop_piece(b_copy, row, col, player_piece)
+            new_score = minimax(b_copy, depth-1, alpha, beta, False, opp_player_piece, player1_used_bomb, player2_used_bomb)[2]
+
+            if new_score > value:
+                value = new_score
+                column = col
+                use_bomb = False
+
+            if player_piece == 1:
+                if not player1_used_bomb:
+                    c_copy = board.copy()
+                    remove_surrounding_pieces(c_copy, row, col)
+                    new_score_with_bomb = minimax(c_copy, depth - 1, alpha, beta, False, opp_player_piece, True, player2_used_bomb)[2]
+
+                    if new_score_with_bomb > value:
+                        value = new_score
+                        column = col
+                        use_bomb = True
             else:
-                pygame.draw.circle(screen, BLUE, (posx, int(SQUARESIZE / 2)), RADIUS)
+                if not player2_used_bomb:
+                    c_copy = board.copy()
+                    remove_surrounding_pieces(c_copy, row, col)
+                    new_score_with_bomb = minimax(c_copy, depth - 1, alpha, beta, False, opp_player_piece, player1_used_bomb, True)[2]
 
-            pygame.display.update()
+                    if new_score_with_bomb > value:
+                        value = new_score
+                        column = col
+                        use_bomb = True
 
-        if event.type == pygame.MOUSEBUTTONDOWN and not bomb_event:
-            pygame.draw.rect(screen, BLACK, (0, 0, width, SQUARESIZE))
+            alpha = max(alpha, value)
+            if alpha >= beta:
+                break
+        return use_bomb, column, value
 
-            posx = event.pos[0]
-            col = int(math.floor(posx / SQUARESIZE))
+    else: # Minimizing player
+        value = math.inf
+        column = random.choice(valid_locations)
+        for col in valid_locations:
+            row = get_next_open_row(board, col)
 
-            if is_valid_location(board, col):
-                row = get_next_open_row(board, col)
+            b_copy = board.copy()
+            drop_piece(b_copy, row, col, opp_player_piece)
+            new_score = minimax(b_copy, depth-1, alpha, beta, True, player_piece, player1_used_bomb, player2_used_bomb)[2]
 
-                # Check if the current player used a bomb last turn
-                if (turn == 0 and player1_used_bomb_last_turn) or (turn == 1 and player2_used_bomb_last_turn):
-                    # Player must place a regular disc
-                    if turn == 0:
-                        drop_piece(board, row, col, 1)
-                        player1_used_bomb_last_turn = False
-                    else:
-                        drop_piece(board, row, col, 2)
-                        player2_used_bomb_last_turn = False
+            if new_score < value:
+                value = new_score
+                column = col
+                use_bomb = False
 
-                    draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
-                    game_over = check_game_over(board)
-                    if not game_over:
-                        turn += 1
-                        turn = turn % 2
+            if opp_player_piece == 1:
+                if not player1_used_bomb:
+                    c_copy = board.copy()
+                    remove_surrounding_pieces(c_copy, row, col)
+                    new_score_with_bomb = minimax(c_copy, depth - 1, alpha, beta, True, player_piece, True, player2_used_bomb)[2]
+
+                    if new_score_with_bomb < value:
+                        value = new_score
+                        column = col
+                        use_bomb = True
+            else:
+                if not player2_used_bomb:
+                    c_copy = board.copy()
+                    remove_surrounding_pieces(c_copy, row, col)
+                    new_score_with_bomb = minimax(c_copy, depth - 1, alpha, beta, True, player_piece, player1_used_bomb, True)[2]
+
+                    if new_score_with_bomb < value:
+                        value = new_score
+                        column = col
+                        use_bomb = True
+
+            beta = min(beta, value)
+            if alpha >= beta:
+                break
+        return use_bomb, column, value
+
+def ai_analysis(board, player_piece, player1_used_bomb, player2_used_bomb, ai_algorithm):
+    col = 0
+    use_bomb = False
+
+    if ai_algorithm == "minimax":
+        use_bomb, col, minimax_score = minimax(board, 5, -math.inf, math.inf, True, player_piece, player1_used_bomb, player2_used_bomb)
+
+    return col, use_bomb
+
+def manual_mode():
+    board = create_board()
+    print_board(board)
+    game_over = False
+    turn = random.randint(0, 1) #make first player a random choice
+
+    player1_used_bomb = False
+    player2_used_bomb = False
+    player1_used_bomb_last_turn = False
+    player2_used_bomb_last_turn = False
+    bomb_event = False
+    use_bomb = False
+
+    draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
+    pygame.display.update()
+
+    while not game_over:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                sys.exit()
+
+            if bomb_event:
+                bomb_prompt()
+
+            if event.type == pygame.MOUSEMOTION and not bomb_event:
+                pygame.draw.rect(screen, BLACK, (0, 0, width, SQUARESIZE))
+                posx = event.pos[0]
+                if turn == 0:
+                    pygame.draw.circle(screen, RED, (posx, int(SQUARESIZE / 2)), RADIUS)
                 else:
-                    # Ask for bomb usage if they haven't used it
-                    if (turn == 0 and not player1_used_bomb) or (turn == 1 and not player2_used_bomb):
-                        bomb_event = True
-                        label = myfont.render("Use Bomb? Press Y or N", 1, WHITE)
-                        screen.blit(label, (140, 70))
-                        pygame.display.update()
-                        selected_row = row
-                        selected_col = col
-                    else:
+                    pygame.draw.circle(screen, BLUE, (posx, int(SQUARESIZE / 2)), RADIUS)
+
+                pygame.display.update()
+
+            if event.type == pygame.MOUSEBUTTONDOWN and not bomb_event:
+                pygame.draw.rect(screen, BLACK, (0, 0, width, SQUARESIZE))
+
+                posx = event.pos[0]
+                col = int(math.floor(posx / SQUARESIZE))
+
+                if is_valid_location(board, col):
+                    row = get_next_open_row(board, col)
+
+                    # Check if the current player used a bomb last turn
+                    if (turn == 0 and player1_used_bomb_last_turn) or (turn == 1 and player2_used_bomb_last_turn):
                         # Player must place a regular disc
                         if turn == 0:
                             drop_piece(board, row, col, 1)
+                            player1_used_bomb_last_turn = False
                         else:
                             drop_piece(board, row, col, 2)
+                            player2_used_bomb_last_turn = False
 
                         draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
                         game_over = check_game_over(board)
                         if not game_over:
                             turn += 1
                             turn = turn % 2
+                    else:
+                        # Ask for bomb usage if they haven't used it
+                        if (turn == 0 and not player1_used_bomb) or (turn == 1 and not player2_used_bomb):
+                            bomb_event = True
+                            #bomb_prompt()
+                            selected_row = row
+                            selected_col = col
+                        else:
+                            # Player must place a regular disc
+                            if turn == 0:
+                                drop_piece(board, row, col, 1)
+                            else:
+                                drop_piece(board, row, col, 2)
 
-        if event.type == pygame.KEYDOWN and bomb_event:
-            if event.key == pygame.K_y:
-                use_bomb = True
-            elif event.key == pygame.K_n:
-                use_bomb = False
+                            draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
+                            game_over = check_game_over(board)
+                            if not game_over:
+                                turn += 1
+                                turn = turn % 2
 
-            bomb_event = False  # Reset bomb prompt
-            pygame.draw.rect(screen, BLACK, (140, 70, 300, 40))  # Clear the bomb prompt
-            pygame.display.update()
+            if event.type == pygame.KEYDOWN and bomb_event:
+                if event.key == pygame.K_y:
+                    use_bomb = True
+                elif event.key == pygame.K_n:
+                    use_bomb = False
 
-            if use_bomb:
-                remove_surrounding_pieces(board, selected_row, selected_col)
+                bomb_event = False  # Reset bomb prompt
+                pygame.draw.rect(screen, BLACK, (140, 70, 300, 40))  # Clear the bomb prompt
+                pygame.display.update()
+
+                if use_bomb:
+                    remove_surrounding_pieces(board, selected_row, selected_col)
+                    draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
+                    game_over = check_game_over(board)
+                    if turn == 0:
+                        player1_used_bomb = True
+                        player1_used_bomb_last_turn = True
+                    else:
+                        player2_used_bomb = True
+                        player2_used_bomb_last_turn = True
+                    use_bomb = False
+
+                    if not game_over:
+                        turn += 1
+                        turn = turn % 2
+                else:
+                    # Place a regular disc
+                    if turn == 0:
+                        drop_piece(board, selected_row, selected_col, 1)
+                    else:
+                        drop_piece(board, selected_row, selected_col, 2)
+
+                    draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
+                    game_over = check_game_over(board)
+                    if not game_over:
+                        turn += 1
+                        turn = turn % 2
+
+        if game_over:
+            pygame.time.wait(3000)
+
+def ai_mode():
+    board = create_board()
+    print_board(board)
+    game_over = False
+    turn = random.randint(0, 1) #make first player a random choice
+
+    player1_used_bomb = False
+    player2_used_bomb = False
+    player1_used_bomb_last_turn = False
+    player2_used_bomb_last_turn = False
+    bomb_event = False
+    use_bomb = False
+
+    draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
+    pygame.display.update()
+
+    while True:
+        #select AI algorithm for each player
+        if turn == 0:
+            col, use_bomb = ai_analysis(board, turn+1, player1_used_bomb, player2_used_bomb, "minimax")
+
+        else:
+            col, use_bomb = ai_analysis(board, turn+1, player1_used_bomb, player2_used_bomb, "minimax")
+
+        #col = random.randint(0, COLUMN_COUNT - 1) #AI picks
+
+        if is_valid_location(board, col):
+            row = get_next_open_row(board, col)
+
+            # Check if the current player used a bomb last turn
+            if (turn == 0 and player1_used_bomb_last_turn) or (turn == 1 and player2_used_bomb_last_turn):
+                # Player must place a regular disc
+                if turn == 0:
+                    drop_piece(board, row, col, 1)
+                    player1_used_bomb_last_turn = False
+                else:
+                    drop_piece(board, row, col, 2)
+                    player2_used_bomb_last_turn = False
+
                 draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
                 game_over = check_game_over(board)
-                if turn == 0:
-                    player1_used_bomb = True
-                    player1_used_bomb_last_turn = True
-                else:
-                    player2_used_bomb = True
-                    player2_used_bomb_last_turn = True
-                use_bomb = False
-
                 if not game_over:
                     turn += 1
                     turn = turn % 2
             else:
-                # Place a regular disc
-                if turn == 0:
-                    drop_piece(board, selected_row, selected_col, 1)
+                # Ask for bomb usage if they haven't used it
+                if (turn == 0 and not player1_used_bomb) or (turn == 1 and not player2_used_bomb):
+                    bomb_event = True
+                    selected_row = row
+                    selected_col = col
                 else:
-                    drop_piece(board, selected_row, selected_col, 2)
+                    # Player must place a regular disc
+                    if turn == 0:
+                        drop_piece(board, row, col, 1)
+                    else:
+                        drop_piece(board, row, col, 2)
 
-                draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
-                game_over = check_game_over(board)
-                if not game_over:
-                    turn += 1
-                    turn = turn % 2
+                    draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
+                    game_over = check_game_over(board)
+                    if not game_over:
+                        turn += 1
+                        turn = turn % 2
 
-    if game_over:
-        pygame.time.wait(3000)
+            if bomb_event:
+                bomb_event = False
+                #use_bomb = random.choice([True, False]) #AI picks
+
+                if use_bomb:
+                    print("used bomb: ", turn)
+                    remove_surrounding_pieces(board, selected_row, selected_col)
+                    draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
+                    game_over = check_game_over(board)
+                    if turn == 0:
+                        player1_used_bomb = True
+                        player1_used_bomb_last_turn = True
+                    else:
+                        player2_used_bomb = True
+                        player2_used_bomb_last_turn = True
+                    use_bomb = False
+
+                    if not game_over:
+                        turn += 1
+                        turn = turn % 2
+                else:
+                    # Place a regular disc
+                    if turn == 0:
+                        drop_piece(board, selected_row, selected_col, 1)
+                    else:
+                        drop_piece(board, selected_row, selected_col, 2)
+
+                    draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
+                    game_over = check_game_over(board)
+                    if not game_over:
+                        turn += 1
+                        turn = turn % 2
+
+            if game_over:
+                pygame.time.wait(5000)
+                break
+
+if __name__=="__main__":
+    #manual_mode()
+    ai_mode()
