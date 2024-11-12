@@ -583,7 +583,7 @@ def ai_mode():
                 break
 
     # Print stats to console 
-    print(f"Game Duration: {game_duration:.2f} seconds")
+    print(f"Game Duration using MiniMax: {game_duration:.2f} seconds")
     print(f"Player 1 Decisions: {player1_decisions}")
     print(f"Player 2 Decisions: {player2_decisions}")
     print(f"Total Decisions: {player1_decisions + player2_decisions}")
