@@ -3,6 +3,7 @@ import pygame
 import sys
 import math
 import random
+import time
 
 # Initialize Pygame
 pygame.init()
@@ -31,7 +32,7 @@ RADIUS = int(SQUARESIZE / 2 - 5)
 
 screen = pygame.display.set_mode(size)
 
-myfont = pygame.font.SysFont("monospace", 30)
+myfont = pygame.font.SysFont("monospace", 28)
 
 def create_board():
     board = np.zeros((ROW_COUNT,COLUMN_COUNT))
@@ -97,7 +98,7 @@ def draw_board(board, myfont, player1_used_bomb, player2_used_bomb):
     player1_label = myfont.render(f"Player 1 {'(Bomb Used)' if player1_used_bomb else ''}", 1, RED)
     player2_label = myfont.render(f"Player 2 {'(Bomb Used)' if player2_used_bomb else ''}", 1, BLUE)
     screen.blit(player1_label, (10, 10))
-    screen.blit(player2_label, (width - 200, 10))
+    screen.blit(player2_label, (width - 340, 10))
     
     pygame.display.update()
 
@@ -158,17 +159,17 @@ def is_board_full(board):
 def check_game_over(board):
     if winning_move(board, 1):
         label = myfont.render("Player 1 wins!!", 1, RED)
-        screen.blit(label, (40, 10))
+        screen.blit(label, (40, 60))
         pygame.display.update()
         return True
     elif winning_move(board, 2):
         label = myfont.render("Player 2 wins!!", 1, BLUE)
-        screen.blit(label, (40, 10))
+        screen.blit(label, (40, 60))
         pygame.display.update()
         return True
     elif is_board_full(board):
         label = myfont.render("Game ends in a draw!", 1, WHITE)
-        screen.blit(label, (40, 10))
+        screen.blit(label, (40, 60))
         pygame.display.update()
         return True
     return False
@@ -483,6 +484,10 @@ def ai_mode():
     player2_used_bomb_last_turn = False
     bomb_event = False
     use_bomb = False
+    
+    player1_decisions = 0 # New variables for tracking 
+    player2_decisions = 0 # New variables for tracking 
+    start_time = time.time() # New variables for tracking 
 
     draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
     pygame.display.update()
@@ -491,9 +496,11 @@ def ai_mode():
         #select AI algorithm for each player
         if turn == 0:
             col, use_bomb = ai_analysis(board, turn+1, player1_used_bomb, player2_used_bomb, "minimax")
+            player1_decisions += 1
 
         else:
             col, use_bomb = ai_analysis(board, turn+1, player1_used_bomb, player2_used_bomb, "minimax")
+            player2_decisions += 1
 
         #col = random.randint(0, COLUMN_COUNT - 1) #AI picks
 
@@ -568,8 +575,18 @@ def ai_mode():
                         turn = turn % 2
 
             if game_over:
-                pygame.time.wait(5000)
+                end_time = time.time()
+                game_duration = end_time - start_time
+                
+                pygame.display.update()
+                pygame.time.wait(4000)  # Display stats for 10 seconds
                 break
+
+    # Print stats to console 
+    print(f"Game Duration: {game_duration:.2f} seconds")
+    print(f"Player 1 Decisions: {player1_decisions}")
+    print(f"Player 2 Decisions: {player2_decisions}")
+    print(f"Total Decisions: {player1_decisions + player2_decisions}")
 
 if __name__=="__main__":
     #manual_mode()
