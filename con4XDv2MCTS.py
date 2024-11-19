@@ -1,11 +1,9 @@
-
 import numpy as np
 import pygame
 import sys
 import math
 import random
 import time
-import copy
 
 # Initialize Pygame
 pygame.init()
@@ -163,18 +161,18 @@ def check_game_over(board):
         label = myfont.render("Player 1 wins!!", 1, RED)
         screen.blit(label, (40, 60))
         pygame.display.update()
-        return True
+        return True, 1
     elif winning_move(board, 2):
         label = myfont.render("Player 2 wins!!", 1, BLUE)
         screen.blit(label, (40, 60))
         pygame.display.update()
-        return True
+        return True, 2
     elif is_board_full(board):
         label = myfont.render("Game ends in a draw!", 1, WHITE)
         screen.blit(label, (40, 60))
         pygame.display.update()
-        return True
-    return False
+        return True, 0
+    return False, None
 
 def bomb_prompt():
     label = myfont.render("Use Bomb? Press Y or N", 1, WHITE)
@@ -239,11 +237,11 @@ def get_valid_locations(board):
     for col in range(COLUMN_COUNT):
         if is_valid_location(board, col):
             valid_locations.append(col)
-    print("Valid locations:", valid_locations)  # Add this line
     return valid_locations
 
 def is_terminal_node(board):
     return winning_move(board, 1) or winning_move(board, 2) or len(get_valid_locations(board)) == 0
+
 
 class MCTSNode:
     def __init__(self, board, player, parent=None, move=None, used_bomb=False):
@@ -267,47 +265,39 @@ class MCTSNode:
         return len(self.children) == len(get_valid_locations(self.board))
 
     def best_child(self, c_param=1.4):
-        # Choose the best child using UCB1 score, with a check for zero visits
         best_score = -float('inf')
         best_node = None
-    
         for c in self.children:
-            # If a child has zero visits, prioritize it by assigning a high score
             if c.visits == 0:
                 score = float('inf')
             else:
                 score = (c.score / c.visits) + c_param * ((math.log(self.visits) / c.visits) ** 0.5)
-            
             if score > best_score:
                 best_score = score
                 best_node = c
-        
         return best_node
 
 def mcts(board, player, player1_used_bomb, player2_used_bomb, iterations=1000):
     root = MCTSNode(board, player)
-    move_threshold = 3  # Minimum moves before considering bomb usage
-
     for _ in range(iterations):
         node = root
         temp_board = board.copy()
         temp_player1_used_bomb = player1_used_bomb
         temp_player2_used_bomb = player2_used_bomb
-        move_count = np.count_nonzero(temp_board)
+        player1_turns = 0
+        player2_turns = 0
 
         # Selection
         while node.fully_expanded() and node.children:
             node = node.best_child()
             if node.used_bomb:
-                row = get_next_open_row(temp_board, node.move)
-                remove_surrounding_pieces(temp_board, row, node.move)
+                remove_surrounding_pieces(temp_board, get_next_open_row(temp_board, node.move), node.move)
                 if node.player == 1:
                     temp_player1_used_bomb = True
                 else:
                     temp_player2_used_bomb = True
             else:
-                row = get_next_open_row(temp_board, node.move)
-                drop_piece(temp_board, row, node.move, node.player)
+                drop_piece(temp_board, get_next_open_row(temp_board, node.move), node.move, node.player)
 
         # Expansion
         valid_moves = get_valid_locations(temp_board)
@@ -323,24 +313,13 @@ def mcts(board, player, player1_used_bomb, player2_used_bomb, iterations=1000):
             if unvisited_moves:
                 move = random.choice(list(unvisited_moves))
                 new_player = 3 - node.player
-
-                # Consider both regular move and bomb move
                 for use_bomb in [False, True]:
-                    if use_bomb:
-                        if (new_player == 1 and temp_player1_used_bomb) or (new_player == 2 and temp_player2_used_bomb):
-                            continue
-                        if move_count < move_threshold:
-                            continue  # Skip bomb if early game
-                        test_board = temp_board.copy()
-                        test_row = get_next_open_row(test_board, move)
-                        remove_surrounding_pieces(test_board, test_row, move)
-                        if winning_move(test_board, 3 - new_player):
-                            child = MCTSNode(temp_board, new_player, parent=node, move=move, used_bomb=use_bomb)
-                            node.add_child(child)
-                    else:
-                        child = MCTSNode(temp_board, new_player, parent=node, move=move, used_bomb=use_bomb)
-                        node.add_child(child)
-                
+                    if use_bomb and ((new_player == 1 and temp_player1_used_bomb) or (new_player == 2 and temp_player2_used_bomb)):
+                        continue
+                    child = MCTSNode(temp_board, new_player, parent=node, move=move, used_bomb=use_bomb)
+                    node.add_child(child)
+                node = random.choice(node.children)
+            else:
                 node = random.choice(node.children)
 
         # Simulation
@@ -348,21 +327,28 @@ def mcts(board, player, player1_used_bomb, player2_used_bomb, iterations=1000):
             valid_moves = get_valid_locations(temp_board)
             if not valid_moves:
                 break
-
             move = random.choice(valid_moves)
             use_bomb = False
 
-            if move_count >= move_threshold:
-                if (node.player == 1 and not temp_player1_used_bomb) or (node.player == 2 and not temp_player2_used_bomb):
-                    temp_test_board = temp_board.copy()
-                    test_row = get_next_open_row(temp_test_board, move)
-                    remove_surrounding_pieces(temp_test_board, test_row, move)
-                    if winning_move(temp_test_board, 3 - node.player):
-                        use_bomb = True
+            # Update turn count for each player
+            if node.player == 1:
+                player1_turns += 1
+            else:
+                player2_turns += 1
+
+            # Check if bomb can be used (after 3rd move)
+            if ((node.player == 1 and player1_turns >= 3 and not temp_player1_used_bomb) or 
+                (node.player == 2 and player2_turns >= 3 and not temp_player2_used_bomb)):
+                opponent = 3 - node.player
+                temp_board_copy = temp_board.copy()
+                drop_piece(temp_board_copy, get_next_open_row(temp_board_copy, move), move, opponent)
+                if winning_move(temp_board_copy, opponent):
+                    use_bomb = True
+                elif random.random() < 0.1:  # 10% chance to use bomb randomly
+                    use_bomb = True
 
             if use_bomb:
-                row = get_next_open_row(temp_board, move)
-                remove_surrounding_pieces(temp_board, row, move)
+                remove_surrounding_pieces(temp_board, get_next_open_row(temp_board, move), move)
                 if node.player == 1:
                     temp_player1_used_bomb = True
                 else:
@@ -371,7 +357,7 @@ def mcts(board, player, player1_used_bomb, player2_used_bomb, iterations=1000):
                 row = get_next_open_row(temp_board, move)
                 drop_piece(temp_board, row, move, node.player)
 
-            move_count += 1
+            node.player = 3 - node.player
 
         # Backpropagation
         result = 1 if winning_move(temp_board, player) else 0
@@ -379,9 +365,8 @@ def mcts(board, player, player1_used_bomb, player2_used_bomb, iterations=1000):
             node.update(result)
             node = node.parent
 
-    best_move_node = root.best_child()
-    return best_move_node.move, best_move_node.used_bomb  # Return both move and bomb status
-
+    best_child = max(root.children, key=lambda c: c.visits)
+    return best_child.move, best_child.used_bomb
 
 def ai_analysis(board, player_piece, player1_used_bomb, player2_used_bomb):
     col, use_bomb = mcts(board, player_piece, player1_used_bomb, player2_used_bomb)
@@ -392,34 +377,36 @@ def ai_mode():
     board = create_board()
     print_board(board)
     game_over = False
-    turn = 0  # Ensure Player 1 (red) always goes first
+    turn = 0
     player1_used_bomb = False
     player2_used_bomb = False
     player1_decisions = 0
     player2_decisions = 0
+    player1_turns = 0
+    player2_turns = 0
     start_time = time.time()
-    
+    winner = None
     draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
     pygame.display.update()
 
     while not game_over:
         if turn == 0:
+            player1_turns += 1
             col, use_bomb = ai_analysis(board, turn+1, player1_used_bomb, player2_used_bomb)
             player1_decisions += 1
         else:
+            player2_turns += 1
             col, use_bomb = ai_analysis(board, turn+1, player1_used_bomb, player2_used_bomb)
             player2_decisions += 1
 
         if col is None:
-            # No valid moves, end the game
             game_over = True
             label = myfont.render("Game ends in a draw!", 1, WHITE)
             screen.blit(label, (40, 60))
             pygame.display.update()
         elif is_valid_location(board, col):
             row = get_next_open_row(board, col)
-            
-            if use_bomb and ((turn == 0 and not player1_used_bomb) or (turn == 1 and not player2_used_bomb)):
+            if use_bomb and ((turn == 0 and player1_turns >= 3 and not player1_used_bomb) or (turn == 1 and player2_turns >= 3 and not player2_used_bomb)):
                 remove_surrounding_pieces(board, row, col)
                 if turn == 0:
                     player1_used_bomb = True
@@ -427,26 +414,47 @@ def ai_mode():
                     player2_used_bomb = True
             else:
                 drop_piece(board, row, col, turn + 1)
-            
+
             draw_board(board, myfont, player1_used_bomb, player2_used_bomb)
-            game_over = check_game_over(board)
-            
+            game_over, winner = check_game_over(board)
+
             if not game_over:
                 turn = (turn + 1) % 2
 
         if game_over:
             end_time = time.time()
             game_duration = end_time - start_time
-            
             pygame.display.update()
             pygame.time.wait(4000)  # Display stats for 4 seconds
+
+            # Print stats to console
+            print(f"\nGame Statistics:")
+            print(f"Game Duration using MCTS: {game_duration:.2f} seconds")
+            print(f"Player 1 Decisions: {player1_decisions}")
+            print(f"Player 2 Decisions: {player2_decisions}")
+            print(f"Total Decisions: {player1_decisions + player2_decisions}")
+
+            # Print the winner
+            if winner == 1:
+                print("Player 1 wins!")
+            elif winner == 2:
+                print("Player 2 wins!")
+            else:
+                print("The game ends in a draw!")
+
+            # Print bomb disc usage
+            print("\nBomb Disc Usage:")
+            if player1_used_bomb and player2_used_bomb:
+                print("Both players used their bomb disc.")
+            elif player1_used_bomb:
+                print("Player 1 used their bomb disc.")
+            elif player2_used_bomb:
+                print("Player 2  used their bomb disc.")
+            else:
+                print("Neither player used their bomb disc.")
+
             break
 
-    # Print stats to console as well
-    print(f"Game Duration using MCTS: {game_duration:.2f} seconds")
-    print(f"Player 1 Decisions: {player1_decisions}")
-    print(f"Player 2 Decisions: {player2_decisions}")
-    print(f"Total Decisions: {player1_decisions + player2_decisions}")
-
 if __name__=="__main__":
+    #manual_mode()
     ai_mode()
